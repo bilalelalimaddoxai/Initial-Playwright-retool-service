@@ -53,7 +53,7 @@ def scrape_items_inspected(creds: Credentials):
                 print("✅ Clicked Monitor button in sidebar.")
             except Exception as e:
                 print("❌ Could not click Monitor menu item:", e)
-                page.screenshot(path="/tmp/sidebar_debug.png")
+                page.screenshot(path="/tmp/sidebar_debug.png", timeout=10000)
                 with open("/tmp/sidebar_debug.html", "w", encoding="utf-8") as f:
                     f.write(page.content())
                 raise HTTPException(status_code=500, detail="Sidebar not found or not clickable.")
@@ -75,7 +75,7 @@ def scrape_items_inspected(creds: Credentials):
                         time.sleep(3)
 
                 print(f"📊 Items inspected: {value}")
-                page.screenshot(path="/tmp/monitor_debug.png")
+                page.screenshot(path="/tmp/monitor_debug.png", timeout=10000)
                 with open("/tmp/monitor_debug.html", "w", encoding="utf-8") as f:
                     f.write(page.content())
                 browser.close()
