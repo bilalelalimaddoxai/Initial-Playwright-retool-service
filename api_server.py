@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.sync_api import sync_playwright
-import time, os
+import time
 
 app = FastAPI()
 
@@ -14,84 +14,60 @@ class Credentials(BaseModel):
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
     """
-    1.   open login page
-    2.   log in (handles EN / DE buttons)
-    3.   click the Monitor entry in the sidebar (even if off-screen)
-    4.   grab the “Items inspected” KPI
+    1. Log in to Maddox.ai        (Login / Anmelden button)
+    2. Read the <a href="/monitor?..."> inside the sidebar (no clicking)
+    3. page.goto() that URL directly
+    4. Extract the “Items inspected” KPI
     """
 
     try:
         print("🔓  Starting scraper")
         with sync_playwright() as pw:
-            browser = pw.chromium.launch()  # headless in Render
+            browser = pw.chromium.launch()                 # headless on Render
             page = browser.new_page()
 
-            # ─── 1) LOGIN ──────────────────────────────────────────────────
-            print("🌐  Navigate to login")
+            # ─── 1) LOGIN ───────────────────────────────────────────────
             page.goto("https://app.maddox.ai/login")
             page.fill("#login-email-input", creds.email)
             page.fill("#login-password-input", creds.password)
             time.sleep(1.5)
 
-            print("🔍  Click Login / Anmelden")
             for label in ("Login", "Anmelden"):
                 btn = page.locator(f"button:has-text('{label}')")
                 if btn.is_visible(timeout=7_000):
                     btn.click(force=True)
-                    print(f"✅  Clicked '{label}'")
+                    print(f"✅  Clicked '{label}' button")
                     break
             else:
                 raise RuntimeError("Login button not found")
 
-            # ─── 2) CLICK MONITOR ─────────────────────────────────────────
-            print("⏳  Waiting for sidebar to render")
-            time.sleep(3)  # Render can be slow
-
-            monitor_btn = page.locator('[data-testid="main-menu-monitor"]')
-            monitor_btn.wait_for(state="attached", timeout=20_000)  # attached is enough
-            monitor_btn.scroll_into_view_if_needed()
-            monitor_btn.click(force=True)
-            print("✅  Clicked Monitor (force-click)")
-
-            # ─── 3) WAIT FOR MONITOR VIEW ────────────────────────────────
-            page.wait_for_url("**/monitor**", timeout=15_000)
-            page.wait_for_load_state("networkidle")
+            # ─── 2) GET MONITOR LINK & NAVIGATE ────────────────────────
+            time.sleep(3)   # give React time for the sidebar
+            link_href = page.locator("[data-testid='main-menu-monitor'] a").get_attribute("href")
+            if not link_href:
+                link_href = "/monitor"                      # fallback
+            full_url = "https://app.maddox.ai" + link_href
+            print(f"➡️  goto {full_url}")
+            page.goto(full_url, wait_until="networkidle")
             time.sleep(2)
-            print("✅  Monitor page loaded")
+            print("✅  Monitor loaded")
 
-            # ─── Step 4: Click the Monitor icon (works collapsed & headless) ─────────────
-            print("⏳  Waiting for sidebar")
-            time.sleep(3)                         # give React time in Render
-            
-            # we’ll click the <a> child if present, else the <li>
-            selector_li = "[data-testid='main-menu-monitor']"
-            selector_a  = "[data-testid='main-menu-monitor'] a"
-            
-            # 1) wait until the <li> exists in the DOM
-            monitor_li = page.locator(selector_li)
-            monitor_li.wait_for(state="attached", timeout=20_000)
-            
-            # 2) if <a> exists, scroll & JS-click it; else click the <li>
-            if page.locator(selector_a).count() > 0:
-                monitor_a = page.locator(selector_a)
-                monitor_a.scroll_into_view_if_needed()
-                page.evaluate("el => el.click()", monitor_a)
-            else:
-                monitor_li.scroll_into_view_if_needed()
-                page.evaluate("el => el.click()", monitor_li)
-            
-            print("✅  Fired JS click on Monitor")
-            
-            # 3) wait for navigation
-            page.wait_for_url("**/monitor**", timeout=15_000)
-            page.wait_for_load_state("networkidle")
-            time.sleep(2)
-            print("✅  Monitor page loaded")
-
+            # ─── 3) EXTRACT KPI ────────────────────────────────────────
+            span = page.locator(
+                "div:has(h5:text-is('Items inspected')) span[aria-label*='items inspected']"
+            )
+            value = "(not available)"
+            for _ in range(3):
+                span.wait_for(state="attached", timeout=7_000)
+                aria = span.get_attribute("aria-label") or ""
+                if aria.strip() and aria[0].isdigit():
+                    value = aria.split()[0]
+                    break
+                time.sleep(3)
 
             browser.close()
 
-        print("✅  Scrape complete")
+        print(f"📊  Items inspected = {value}")
         return {"items_inspected": value}
 
     except Exception as e:
