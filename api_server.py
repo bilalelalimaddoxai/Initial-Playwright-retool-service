@@ -12,11 +12,12 @@ class Credentials(BaseModel):
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
     """
-    Logs into Maddox.ai, clicks through to the Monitor page, 
+    Logs into Maddox.ai, clicks through to Monitor,
     and extracts the "Items inspected" KPI.
     """
     try:
         with sync_playwright() as p:
+            # Launch browser (headless by default)
             browser = p.chromium.launch()
             page = browser.new_page()
 
@@ -32,14 +33,12 @@ def scrape_items_inspected(creds: Credentials):
                     btn.click(force=True)
                     break
 
-            # 2. Wait for the sidebar Monitor button and click it
-            page.wait_for_selector('[data-testid="main-menu-Monitor"]', timeout=15000)
-            time.sleep(1)  # let any animations finish
-            monitor_btn = page.locator('[data-testid="main-menu-Monitor"]')
-            monitor_btn.click(force=True)
-            print("✅ Clicked Monitor button in sidebar")
+            # 2. Wait a bit and click the Monitor sidebar button
+            time.sleep(2)  # let React finish rendering the sidebar
+            page.click('[data-testid="main-menu-Monitor"]', force=True)
+            print("✅ Clicked Monitor button")
 
-            # 3. Now wait for the Monitor page to load
+            # 3. Wait for the Monitor page to load
             page.wait_for_url("**/monitor**", timeout=15000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
@@ -57,8 +56,9 @@ def scrape_items_inspected(creds: Credentials):
                 time.sleep(2)
 
             browser.close()
-
         return {"items_inspected": value}
 
     except Exception as e:
+        # Return the actual error message for easier debugging
         raise HTTPException(status_code=500, detail=str(e))
+
