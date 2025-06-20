@@ -1,7 +1,9 @@
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from playwright.sync_api import sync_playwright
 import time
+import os
 
 app = FastAPI()
 
@@ -43,9 +45,19 @@ def scrape_items_inspected(creds: Credentials):
 
             li = page.locator(li_sel)
             li.wait_for(state="attached", timeout=40_000)
-            li.scroll_into_view_if_needed()
-            li.hover()
-            time.sleep(0.3)
+
+            if not li.is_visible():
+                print("⚠️ Sidebar element not visible — dumping page HTML for inspection")
+                with open("/tmp/sidebar_debug.html", "w", encoding="utf-8") as f:
+                    f.write(page.content())
+                page.screenshot(path="/tmp/sidebar_debug.png")
+                raise RuntimeError("Sidebar element not visible")
+
+            try:
+                li.hover()
+                print("✅ Hovered over sidebar element")
+            except Exception as e:
+                print("⚠️ Hover failed:", e)
 
             if page.locator(a_sel).count() > 0:
                 anchor = page.locator(a_sel)
@@ -93,3 +105,33 @@ def scrape_items_inspected(creds: Credentials):
     except Exception as e:
         print("❌ Final error:", e)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# 🧩 Debug file download routes
+@app.get("/debug/sidebar-html")
+def get_sidebar_html():
+    path = "/tmp/sidebar_debug.html"
+    if os.path.exists(path):
+        return FileResponse(path, media_type="text/html", filename="sidebar_debug.html")
+    raise HTTPException(status_code=404, detail="HTML debug file not found")
+
+@app.get("/debug/sidebar-screenshot")
+def get_sidebar_screenshot():
+    path = "/tmp/sidebar_debug.png"
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/png", filename="sidebar_debug.png")
+    raise HTTPException(status_code=404, detail="Screenshot debug file not found")
+
+@app.get("/debug/monitor-html")
+def get_monitor_html():
+    path = "/tmp/monitor_debug.html"
+    if os.path.exists(path):
+        return FileResponse(path, media_type="text/html", filename="monitor_debug.html")
+    raise HTTPException(status_code=404, detail="Monitor HTML debug file not found")
+
+@app.get("/debug/monitor-screenshot")
+def get_monitor_screenshot():
+    path = "/tmp/monitor_debug.png"
+    if os.path.exists(path):
+        return FileResponse(path, media_type="image/png", filename="monitor_debug.png")
+    raise HTTPException(status_code=404, detail="Monitor screenshot debug file not found")
