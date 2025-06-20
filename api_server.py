@@ -12,13 +12,12 @@ class Credentials(BaseModel):
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
     """
-    Logs into Maddox.ai, clicks through to Monitor,
+    Logs into Maddox.ai, clicks through to the Monitor page,
     and extracts the "Items inspected" KPI.
     """
     try:
         with sync_playwright() as p:
-            # Launch browser (headless by default)
-            browser = p.chromium.launch()
+            browser = p.chromium.launch()  # headless by default
             page = browser.new_page()
 
             # 1. Login
@@ -34,11 +33,23 @@ def scrape_items_inspected(creds: Credentials):
                     break
 
             # 2. Wait a bit and click the Monitor sidebar button
-            time.sleep(2)  # let React finish rendering the sidebar
-            page.click('[data-testid="main-menu-Monitor"]', force=True)
-            print("✅ Clicked Monitor button")
+            time.sleep(3)  # allow React to render the sidebar
+            monitor_btn = page.locator('[data-testid="main-menu-Monitor"]')
+            try:
+                monitor_btn.wait_for(state="visible", timeout=15000)
+                print("🔍 Monitor button visible — clicking now")
+                monitor_btn.click(force=True)
+                print("✅ Clicked Monitor button")
+            except Exception as e:
+                # Fallback in case sidebar is collapsed or delayed
+                print("⚠️ Monitor button not visible—trying to open menu then click again:", e)
+                page.click('button[aria-label="Open main menu"]', force=True)
+                time.sleep(1)
+                monitor_btn.wait_for(state="visible", timeout=10000)
+                monitor_btn.click(force=True)
+                print("✅ Clicked Monitor button after opening menu")
 
-            # 3. Wait for the Monitor page to load
+            # 3. Now wait for the Monitor page to load
             page.wait_for_url("**/monitor**", timeout=15000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
@@ -56,9 +67,9 @@ def scrape_items_inspected(creds: Credentials):
                 time.sleep(2)
 
             browser.close()
+
         return {"items_inspected": value}
 
     except Exception as e:
-        # Return the actual error message for easier debugging
         raise HTTPException(status_code=500, detail=str(e))
 
