@@ -59,22 +59,35 @@ def scrape_items_inspected(creds: Credentials):
             time.sleep(2)
             print("✅  Monitor page loaded")
 
-            # ─── 4) EXTRACT KPI ─────────────────────────────────────────
-            span = page.locator(
-                "div:has(h5:text-is('Items inspected')) "
-                "span[aria-label*='items inspected']"
-            )
+            # ─── Step 4: Click the Monitor icon (works collapsed & headless) ─────────────
+            print("⏳  Waiting for sidebar")
+            time.sleep(3)                         # give React time in Render
+            
+            # we’ll click the <a> child if present, else the <li>
+            selector_li = "[data-testid='main-menu-monitor']"
+            selector_a  = "[data-testid='main-menu-monitor'] a"
+            
+            # 1) wait until the <li> exists in the DOM
+            monitor_li = page.locator(selector_li)
+            monitor_li.wait_for(state="attached", timeout=20_000)
+            
+            # 2) if <a> exists, scroll & JS-click it; else click the <li>
+            if page.locator(selector_a).count() > 0:
+                monitor_a = page.locator(selector_a)
+                monitor_a.scroll_into_view_if_needed()
+                page.evaluate("el => el.click()", monitor_a)
+            else:
+                monitor_li.scroll_into_view_if_needed()
+                page.evaluate("el => el.click()", monitor_li)
+            
+            print("✅  Fired JS click on Monitor")
+            
+            # 3) wait for navigation
+            page.wait_for_url("**/monitor**", timeout=15_000)
+            page.wait_for_load_state("networkidle")
+            time.sleep(2)
+            print("✅  Monitor page loaded")
 
-            value = "(not available)"
-            for attempt in range(3):
-                span.wait_for(state="attached", timeout=7_000)
-                aria = span.get_attribute("aria-label") or ""
-                if aria.strip() and aria.strip()[0].isdigit():
-                    value = aria.split()[0]
-                    print(f"📊  Items inspected = {value}")
-                    break
-                print(f"⏳  Attempt {attempt+1}: aria-label = {aria!r}")
-                time.sleep(3)
 
             browser.close()
 
