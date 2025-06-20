@@ -12,7 +12,8 @@ class Credentials(BaseModel):
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
     """
-    Logs into Maddox.ai, navigates to the Monitor page, and extracts the "Items inspected" KPI.
+    Logs into Maddox.ai, clicks through to the Monitor page, 
+    and extracts the "Items inspected" KPI.
     """
     try:
         with sync_playwright() as p:
@@ -31,20 +32,19 @@ def scrape_items_inspected(creds: Credentials):
                     btn.click(force=True)
                     break
 
-            # 2. Wait for dashboard
-            page.wait_for_url("**/monitor", timeout=10000)
-            page.wait_for_load_state("networkidle")
-            time.sleep(2)
-
-            # 3. Click Monitor in sidebar
+            # 2. Wait for the sidebar Monitor button and click it
+            page.wait_for_selector('[data-testid="main-menu-Monitor"]', timeout=15000)
+            time.sleep(1)  # let any animations finish
             monitor_btn = page.locator('[data-testid="main-menu-Monitor"]')
-            monitor_btn.wait_for(state="visible", timeout=5000)
-            monitor_btn.click()
-            page.wait_for_url("**/monitor", timeout=10000)
+            monitor_btn.click(force=True)
+            print("✅ Clicked Monitor button in sidebar")
+
+            # 3. Now wait for the Monitor page to load
+            page.wait_for_url("**/monitor**", timeout=15000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
 
-            # 4. Extract KPI
+            # 4. Extract KPI: Items inspected
             span = page.locator(
                 "div:has(h5:text-is('Items inspected')) span[aria-label*='items inspected']"
             )
@@ -57,6 +57,7 @@ def scrape_items_inspected(creds: Credentials):
                 time.sleep(2)
 
             browser.close()
+
         return {"items_inspected": value}
 
     except Exception as e:
