@@ -11,64 +11,61 @@ class Credentials(BaseModel):
 
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
-    """
-    1. Login to app.maddox.ai
-    2. Click the Monitor sidebar link
-    3. Extract the 'Items inspected' KPI
-    """
     try:
         print("🔓 Starting scraper")
         with sync_playwright() as pw:
-            browser = pw.chromium.launch()    # headless=True in production
+            browser = pw.chromium.launch()
             page = browser.new_page()
 
-            # ─── Step 1: Login ───────────────────────────────────────────────
-            print("🌐 Navigating to login page")
+            # 1️⃣ Login
+            print("🌐 Navigating to login")
             page.goto("https://app.maddox.ai/login")
             page.fill("#login-email-input", creds.email)
             page.fill("#login-password-input", creds.password)
             time.sleep(1.5)
 
-            # Try both English & German buttons
-            print("🔍 Trying login buttons")
-            clicked = False
+            print("🔍 Clicking Login/Anmelden")
             for label in ("Login", "Anmelden"):
                 btn = page.locator(f"button:has-text('{label}')")
                 if btn.is_visible(timeout=7000):
                     btn.click(force=True)
                     print(f"✅ Clicked '{label}'")
-                    clicked = True
                     break
-            if not clicked:
+            else:
                 raise RuntimeError("Login button not found")
 
-            # ─── Step 2: Navigate to Monitor ───────────────────────────────────
-            print("⏳ Waiting for sidebar to render")
+            # 2️⃣ Wait & click Monitor
+            print("⏳ Waiting for sidebar")
             time.sleep(3)
-            print("🔍 Clicking Monitor sidebar link")
-            page.click('[data-testid="main-menu-monitor"]', force=True)
-            print("✅ Clicked Monitor link")
+            monitor_btn = page.locator('[data-testid="main-menu-monitor"]')
+            monitor_btn.wait_for(state="attached", timeout=15000)
+            print("🔍 Scrolling Monitor into view")
+            monitor_btn.scroll_into_view_if_needed()
+            print("🔍 Force-clicking Monitor")
+            monitor_btn.click(force=True)
+            print("✅ Monitor clicked")
 
-            print("⏳ Waiting for Monitor page to load")
+            # 3️⃣ Wait for Monitor page
+            print("⏳ Waiting for /monitor URL")
             page.wait_for_url("**/monitor**", timeout=15000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
             print("✅ Monitor page loaded")
 
-            # ─── Step 3: Extract KPI ──────────────────────────────────────────
+            # 4️⃣ Extract KPI
             print("🔍 Extracting 'Items inspected'")
             span = page.locator(
                 "div:has(h5:text-is('Items inspected')) span[aria-label*='items inspected']"
             )
             value = "(not available)"
-            for attempt in range(3):
+            for i in range(3):
                 span.wait_for(state="attached", timeout=7000)
                 aria = span.get_attribute("aria-label") or ""
-                if aria.strip() and aria.strip()[0].isdigit():
+                if aria.strip() and aria[0].isdigit():
                     value = aria.split()[0]
-                    print(f"📊 Found KPI: {value}")
+                    print(f"📊 Found: {value}")
                     break
-                print(f"⏳ Attempt {attempt+1}: aria-label={aria!r}")
+                print(f"⏳ Attempt {i+1}: aria-label={aria!r}")
                 time.sleep(3)
 
             browser.close()
