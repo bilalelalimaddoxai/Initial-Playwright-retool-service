@@ -14,53 +14,80 @@ class Credentials(BaseModel):
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
     """
-    1. Log in to Maddox.ai        (Login / Anmelden button)
-    2. Read the <a href="/monitor?..."> inside the sidebar (no clicking)
-    3. page.goto() that URL directly
-    4. Extract the “Items inspected” KPI
+    1.  Log in (handles both Login/Anmelden)
+    2.  Click the collapsed ‘Monitor’ icon reliably
+    3.  Extract the “Items inspected” KPI
     """
 
     try:
         print("🔓  Starting scraper")
         with sync_playwright() as pw:
-            browser = pw.chromium.launch()                 # headless on Render
+            browser = pw.chromium.launch()                # headless=True by default on Render
             page = browser.new_page()
 
-            # ─── 1) LOGIN ───────────────────────────────────────────────
+            # 1️⃣  Login ----------------------------------------------------------
+            print("🌐  Opening login page")
             page.goto("https://app.maddox.ai/login")
             page.fill("#login-email-input", creds.email)
             page.fill("#login-password-input", creds.password)
             time.sleep(1.5)
 
             for label in ("Login", "Anmelden"):
-                btn = page.locator(f"button:has-text('{label}')")
+                btn = page.locator(f"button:has-text(\"{label}\")")
                 if btn.is_visible(timeout=7_000):
                     btn.click(force=True)
-                    print(f"✅  Clicked '{label}' button")
+                    print(f"✅  Clicked '{label}'")
                     break
             else:
                 raise RuntimeError("Login button not found")
 
-            # ─── 2) GET MONITOR LINK & NAVIGATE ────────────────────────
-            time.sleep(3)   # give React time for the sidebar
-            link_href = page.locator("[data-testid='main-menu-monitor'] a").get_attribute("href")
-            if not link_href:
-                link_href = "/monitor"                      # fallback
-            full_url = "https://app.maddox.ai" + link_href
-            print(f"➡️  goto {full_url}")
-            page.goto(full_url, wait_until="networkidle")
-            time.sleep(2)
-            print("✅  Monitor loaded")
+            # 2️⃣  Click Monitor icon (even when sidebar is collapsed) ----------
+            print("⏳  Waiting for sidebar")
+            time.sleep(3)
 
-            # ─── 3) EXTRACT KPI ────────────────────────────────────────
+            li_sel = "[data-testid='main-menu-monitor']"
+            a_sel  = "[data-testid='main-menu-monitor'] a"
+
+            li = page.locator(li_sel)
+            li.wait_for(state="attached", timeout=20_000)
+
+            # hover & scroll so the icon gains size / focus
+            li.scroll_into_view_if_needed()
+            li.hover()
+            time.sleep(0.3)
+
+            # First try a normal Playwright click on the <a> (if it exists)
+            if page.locator(a_sel).count() > 0:
+                anchor = page.locator(a_sel)
+                try:
+                    anchor.click(force=True, timeout=3_000)
+                    print("✅  Anchor click fired")
+                except:
+                    # fallback to JS click
+                    print("⚠️  Anchor click timed-out → JS click fallback")
+                    page.evaluate("el => el.click()", anchor)
+            else:
+                # no <a> child → JS-click the <li>
+                print("⚠️  No <a> child → JS click <li>")
+                page.evaluate("el => el.click()", li)
+
+            # 3️⃣  Wait for Monitor view ----------------------------------------
+            print("⏳  Waiting for /monitor navigation")
+            page.wait_for_url("**/monitor**", timeout=60_000)
+            page.wait_for_load_state("networkidle")
+            time.sleep(2)
+            print("✅  Monitor page loaded")
+
+            # 4️⃣  Extract KPI ---------------------------------------------------
             span = page.locator(
-                "div:has(h5:text-is('Items inspected')) span[aria-label*='items inspected']"
+                "div:has(h5:text-is('Items inspected')) "
+                "span[aria-label*='items inspected']"
             )
             value = "(not available)"
             for _ in range(3):
                 span.wait_for(state="attached", timeout=7_000)
                 aria = span.get_attribute("aria-label") or ""
-                if aria.strip() and aria[0].isdigit():
+                if aria and aria.strip()[0].isdigit():
                     value = aria.split()[0]
                     break
                 time.sleep(3)
@@ -71,5 +98,5 @@ def scrape_items_inspected(creds: Credentials):
         return {"items_inspected": value}
 
     except Exception as e:
-        print("❌  Error:", e)
+        print("❌  Final error:", e)
         raise HTTPException(status_code=500, detail=str(e))
