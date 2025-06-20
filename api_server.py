@@ -1,78 +1,86 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from playwright.sync_api import sync_playwright
-import time
+import time, os
 
 app = FastAPI()
+
 
 class Credentials(BaseModel):
     email: str
     password: str
 
+
 @app.post("/scrape/items-inspected")
 def scrape_items_inspected(creds: Credentials):
+    """
+    1.   open login page
+    2.   log in (handles EN / DE buttons)
+    3.   click the Monitor entry in the sidebar (even if off-screen)
+    4.   grab the “Items inspected” KPI
+    """
+
     try:
-        print("🔓 Starting scraper")
+        print("🔓  Starting scraper")
         with sync_playwright() as pw:
-            browser = pw.chromium.launch()
+            browser = pw.chromium.launch()  # headless in Render
             page = browser.new_page()
 
-            # 1️⃣ Login
-            print("🌐 Navigating to login")
+            # ─── 1) LOGIN ──────────────────────────────────────────────────
+            print("🌐  Navigate to login")
             page.goto("https://app.maddox.ai/login")
             page.fill("#login-email-input", creds.email)
             page.fill("#login-password-input", creds.password)
             time.sleep(1.5)
 
-            print("🔍 Clicking Login/Anmelden")
+            print("🔍  Click Login / Anmelden")
             for label in ("Login", "Anmelden"):
                 btn = page.locator(f"button:has-text('{label}')")
-                if btn.is_visible(timeout=7000):
+                if btn.is_visible(timeout=7_000):
                     btn.click(force=True)
-                    print(f"✅ Clicked '{label}'")
+                    print(f"✅  Clicked '{label}'")
                     break
             else:
                 raise RuntimeError("Login button not found")
 
-            # 2️⃣ Wait & click Monitor
-            print("⏳ Waiting for sidebar")
-            time.sleep(3)
-            monitor_btn = page.locator('[data-testid="main-menu-monitor"]')
-            monitor_btn.wait_for(state="attached", timeout=15000)
-            print("🔍 Scrolling Monitor into view")
-            monitor_btn.scroll_into_view_if_needed()
-            print("🔍 Force-clicking Monitor")
-            monitor_btn.click(force=True)
-            print("✅ Monitor clicked")
+            # ─── 2) CLICK MONITOR ─────────────────────────────────────────
+            print("⏳  Waiting for sidebar to render")
+            time.sleep(3)  # Render can be slow
 
-            # 3️⃣ Wait for Monitor page
-            print("⏳ Waiting for /monitor URL")
-            page.wait_for_url("**/monitor**", timeout=15000)
+            monitor_btn = page.locator('[data-testid="main-menu-monitor"]')
+            monitor_btn.wait_for(state="attached", timeout=20_000)  # attached is enough
+            monitor_btn.scroll_into_view_if_needed()
+            monitor_btn.click(force=True)
+            print("✅  Clicked Monitor (force-click)")
+
+            # ─── 3) WAIT FOR MONITOR VIEW ────────────────────────────────
+            page.wait_for_url("**/monitor**", timeout=15_000)
             page.wait_for_load_state("networkidle")
             time.sleep(2)
-            print("✅ Monitor page loaded")
+            print("✅  Monitor page loaded")
 
-            # 4️⃣ Extract KPI
-            print("🔍 Extracting 'Items inspected'")
+            # ─── 4) EXTRACT KPI ─────────────────────────────────────────
             span = page.locator(
-                "div:has(h5:text-is('Items inspected')) span[aria-label*='items inspected']"
+                "div:has(h5:text-is('Items inspected')) "
+                "span[aria-label*='items inspected']"
             )
+
             value = "(not available)"
-            for i in range(3):
-                span.wait_for(state="attached", timeout=7000)
+            for attempt in range(3):
+                span.wait_for(state="attached", timeout=7_000)
                 aria = span.get_attribute("aria-label") or ""
-                if aria.strip() and aria[0].isdigit():
+                if aria.strip() and aria.strip()[0].isdigit():
                     value = aria.split()[0]
-                    print(f"📊 Found: {value}")
+                    print(f"📊  Items inspected = {value}")
                     break
-                print(f"⏳ Attempt {i+1}: aria-label={aria!r}")
+                print(f"⏳  Attempt {attempt+1}: aria-label = {aria!r}")
                 time.sleep(3)
 
             browser.close()
-        print("✅ Scrape complete")
+
+        print("✅  Scrape complete")
         return {"items_inspected": value}
 
     except Exception as e:
-        print("❌ Error during scrape:", e)
+        print("❌  Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
-
